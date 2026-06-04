@@ -66,5 +66,92 @@ public class Graph {
         }
     }
 
+    public List<Edge> getEdges(Integer node) {
+        lock.readLock().lock();
+        try {
+            if (collapsed.contains(node)) {
+                return Collections.emptyList();
+            }
 
+            ArrayList<Edge> edges = graph.get(node);
+            if (edges == null) {
+                return Collections.emptyList();
+            }
+
+            ArrayList<Edge> result = new ArrayList<>();
+            for (Edge e: edges) {
+                if (e.isOpen() && !collapsed.contains(e.to())) {
+                    result.add(e);
+                }
+            }
+            return result;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public double getWeight(Integer src, Integer dst) {
+        lock.readLock().lock();
+        try {
+            ArrayList<Edge> edges = graph.get(src);
+            if (edges == null) {
+                return -1;
+            }
+
+            for (Edge e: edges) {
+                if (e.to() == dst) {
+                    return e.weight();
+                }
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+        return -1;
+    }
+
+    public boolean containsNode(Integer node) {
+        lock.readLock().lock();
+        try {
+            return graph.containsKey(node);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public boolean containsEdge(Integer src, Integer dst) {
+        lock.readLock().lock();
+        try {
+            ArrayList<Edge> edges = graph.get(src);
+            if (edges == null) {
+                return false;
+            }
+
+            for (Edge e: edges) {
+                if (e.to() == dst) {
+                    return true;
+                }
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+        return false;
+    }
+
+    public boolean isCollapsed(Integer node) {
+        lock.readLock().lock();
+        try {
+            return collapsed.contains(node);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public int size() {
+        lock.readLock().lock();
+        try {
+            return graph.size();
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
 }
