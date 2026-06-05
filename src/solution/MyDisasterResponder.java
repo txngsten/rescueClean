@@ -6,8 +6,7 @@ import util.ConfigurationInfo;
 import util.Pair;
 
 import java.io.IOException;
-import java.util.Comparator;
-import java.util.PriorityQueue;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -74,7 +73,25 @@ public class MyDisasterResponder extends DisasterResponder {
         done.set(true);
     }
 
+    private List<String> getPathFromBase(String target) {
+        if (!done.get()) {
+            return null;
+        }
+        if (!origin.equals(target) && !parent.containsKey(target)) {
+            return null;
+        }
 
+        ArrayList<String> path = new ArrayList<>();
+        for (String curr = target; curr != null; curr = parent.get(curr)) {
+            path.add(curr);
+            if (curr.equals(origin)) {
+                break;
+            }
+        }
+
+        Collections.reverse(path);
+        return path;
+    }
 
 
 }
