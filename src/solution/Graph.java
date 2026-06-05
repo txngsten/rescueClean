@@ -9,8 +9,8 @@ import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Graph {
-    private final HashMap<Integer, ArrayList<Edge>> graph;
-    private final Set<Integer> collapsed;
+    private final HashMap<String, ArrayList<Edge>> graph;
+    private final Set<String> collapsed;
     private final ReentrantReadWriteLock lock;
 
     public Graph() {
@@ -19,7 +19,7 @@ public class Graph {
         lock = new ReentrantReadWriteLock();
     }
 
-    public void addNode(Integer node) {
+    public void addNode(String node) {
         lock.writeLock().lock();
         try {
             graph.putIfAbsent(node, new ArrayList<>());
@@ -28,7 +28,7 @@ public class Graph {
         }
     }
 
-    public void addEdge(Integer src, Integer dst, Double weight) {
+    public void addEdge(String src, String dst, Double weight) {
         lock.writeLock().lock();
         try {
             graph.putIfAbsent(src, new ArrayList<>());
@@ -39,7 +39,7 @@ public class Graph {
         }
     }
 
-    public void setEdgeOpen(Integer src, Integer dst, boolean open) {
+    public void setEdgeOpen(String src, String dst, boolean open) {
         lock.writeLock().lock();
         try {
             ArrayList<Edge> edges = graph.get(src);
@@ -47,8 +47,8 @@ public class Graph {
                 return;
             }
 
-            for (Edge e: edges) {
-                if (e.to() == dst) {
+            for (Edge e : edges) {
+                if (e.to().equals(dst)) {
                     e.setOpen(open);
                 }
             }
@@ -57,7 +57,7 @@ public class Graph {
         }
     }
 
-    public void markCollapsed(Integer node) {
+    public void markCollapsed(String node) {
         lock.writeLock().lock();
         try {
             collapsed.add(node);
@@ -66,7 +66,7 @@ public class Graph {
         }
     }
 
-    public List<Edge> getEdges(Integer node) {
+    public List<Edge> getEdges(String node) {
         lock.readLock().lock();
         try {
             if (collapsed.contains(node)) {
@@ -79,7 +79,7 @@ public class Graph {
             }
 
             ArrayList<Edge> result = new ArrayList<>();
-            for (Edge e: edges) {
+            for (Edge e : edges) {
                 if (e.isOpen() && !collapsed.contains(e.to())) {
                     result.add(e);
                 }
@@ -90,7 +90,7 @@ public class Graph {
         }
     }
 
-    public double getWeight(Integer src, Integer dst) {
+    public double getWeight(String src, String dst) {
         lock.readLock().lock();
         try {
             ArrayList<Edge> edges = graph.get(src);
@@ -98,8 +98,8 @@ public class Graph {
                 return -1;
             }
 
-            for (Edge e: edges) {
-                if (e.to() == dst) {
+            for (Edge e : edges) {
+                if (e.to().equals(dst)) {
                     return e.weight();
                 }
             }
@@ -109,7 +109,7 @@ public class Graph {
         return -1;
     }
 
-    public boolean containsNode(Integer node) {
+    public boolean containsNode(String node) {
         lock.readLock().lock();
         try {
             return graph.containsKey(node);
@@ -118,7 +118,7 @@ public class Graph {
         }
     }
 
-    public boolean containsEdge(Integer src, Integer dst) {
+    public boolean containsEdge(String src, String dst) {
         lock.readLock().lock();
         try {
             ArrayList<Edge> edges = graph.get(src);
@@ -126,8 +126,8 @@ public class Graph {
                 return false;
             }
 
-            for (Edge e: edges) {
-                if (e.to() == dst) {
+            for (Edge e : edges) {
+                if (e.to().equals(dst)) {
                     return true;
                 }
             }
@@ -137,7 +137,7 @@ public class Graph {
         return false;
     }
 
-    public boolean isCollapsed(Integer node) {
+    public boolean isCollapsed(String node) {
         lock.readLock().lock();
         try {
             return collapsed.contains(node);

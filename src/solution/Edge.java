@@ -1,17 +1,17 @@
 package solution;
 
 public class Edge {
-    private final int dst;
+    private final String dst;
     private final double weight;
     private volatile boolean open;
 
-    public Edge(int dst, double weight) {
+    public Edge(String dst, double weight) {
         this.dst = dst;
         this.weight = weight;
         open = true;
     }
 
-    public int to() {
+    public String to() {
         return dst;
     }
 
