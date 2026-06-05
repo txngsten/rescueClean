@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MyDisasterResponder extends DisasterResponder {
     private volatile Graph roadMap;
-    private String origin;
+    private volatile String origin;
 
     private final ConcurrentHashMap<String, Double> distFromBase = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> parent = new ConcurrentHashMap<>();
