@@ -3,6 +3,7 @@ package solution;
 import org.jdom2.*;
 import org.jdom2.input.SAXBuilder;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.List;
 
@@ -16,8 +17,9 @@ public class GraphBuilder {
         // the SAXBuilder is the easiest way to create the JDOM2 objects.
         SAXBuilder jdomBuilder = new SAXBuilder();
 
-        // jdomDocument is the JDOM2 Object
-        Document jdomDocument = jdomBuilder.build(file);
+        // was: Document jdomDocument = jdomBuilder.build(file)
+        String normalised = file.replace('\\', File.separatorChar);
+        Document jdomDocument = jdomBuilder.build(new File(normalised));
 
         // The root element is the root of the document.
         Element graphxml = jdomDocument.getRootElement();
