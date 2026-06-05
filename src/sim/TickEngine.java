@@ -173,6 +173,7 @@ final class TickEngine implements Runnable {
                     if (pendingHalts.containsKey(path.getVehicleNo())) {
                         v.halt();
                         outEventQueue.put(new VehicleHalted(v.getNumber(), v.getLocation()));
+                        pendingHalts.remove(path.getVehicleNo());
                     }
                     else {
                         path.advance();
