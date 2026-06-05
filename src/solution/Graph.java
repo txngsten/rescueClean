@@ -52,6 +52,17 @@ public class Graph {
                     e.setOpen(open);
                 }
             }
+
+            edges = graph.get(dst);
+            if (edges == null) {
+                return;
+            }
+
+            for  (Edge e: edges) {
+                if (e.to() == src) {
+                    e.setOpen(open);
+                }
+            }
         } finally {
             lock.writeLock().unlock();
         }
