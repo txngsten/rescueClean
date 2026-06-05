@@ -34,7 +34,9 @@ public class MyDisasterResponder extends DisasterResponder {
             throw new RuntimeException("Failed to load road map: " + mapFile, e);
         }
 
-
+        final Graph g = roadMap;
+        final String src = origin;
+        executor.submit(() -> dijkstraFromBase(g, src));
     }
 
     private void dijkstraFromBase(Graph graph, String src) {
