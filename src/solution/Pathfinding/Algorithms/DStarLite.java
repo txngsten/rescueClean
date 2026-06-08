@@ -12,66 +12,17 @@ import java.util.PriorityQueue;
 import java.util.Set;
 
 /**
- * D* Lite incremental shortest-path search (optimized, {@code k_m} variant)
- * after Koenig &amp; Likhachev, <i>D* Lite</i> (AAAI 2002), Figure 4.
- *
- * <p>The search runs <b>backward from a fixed goal</b>, so {@code g(s)} is an
- * estimate of the cost to travel from {@code s} to the goal. In this system the
- * goal is the fleet base and a single instance is shared across every returning
- * vehicle: one repair after a road change benefits all of them, and a vehicle
- * moving toward base is handled as a moving start without reordering the queue
- * (that is what the {@code k_m} key offset buys).
- *
- * <h2>Mapping to this graph</h2>
- * <ul>
- *   <li><b>Predecessors.</b> Backward search expands the <em>successors in the
- *       search graph</em>, which are the <em>predecessors in the road graph</em>
- *       (edges <em>into</em> a vertex). {@link Graph} stores out-edges only, so
- *       a reverse adjacency is built once at {@link #initialize} from
- *       {@link Graph#nodes()} + {@link Graph#allEdges(String)} in one O(E)
- *       pass.</li>
- *   <li><b>Live costs.</b> The reverse structure is static, but each arc cost
- *       {@code c(u,v)} is read live via the graph -- a blocked or collapsed arc
- *       reads as {@code +infinity}. This is why D* Lite needs the unfiltered
- *       {@code allEdges}: it must see the arc in order to notice its cost became
- *       infinite.</li>
- *   <li><b>Heuristic.</b> The GraphML nodes carry no coordinates
- *       ({@code <node id="..."/>} only), so the only heuristic we can prove
- *       admissible is {@code h == 0}. With a zero heuristic D* Lite is still
- *       correct and still reuses computation incrementally; it simply is not
- *       heuristically focused and behaves like an incremental uniform-cost
- *       search. The heuristic is isolated in {@link #h(String, String)} so a
- *       coordinate-based admissible heuristic can be substituted later if node
- *       positions ever become available, with no other change.</li>
- * </ul>
- *
- * <h2>Collapse handling</h2>
- * A blocked single arc only changes the lookahead of its tail vertex, so
- * {@link #updateEdge(String, String)} updates exactly that vertex. A
- * <em>collapse</em> is different: every arc into and out of the node becomes
- * unusable at once, so the cheapest successor of <em>each predecessor</em> of
- * the node may have just vanished. {@link #nodeCollapsed(String)} therefore
- * re-evaluates all predecessors of the collapsed node (and the node itself),
- * which is what keeps {@code replan} from handing back a route that still walks
- * through a collapsed node and triggering a destroy/replan feedback loop.
- *
- * <h2>Concurrency</h2>
- * This class holds mutable search state and is <b>not</b> safe for concurrent
- * use. All calls on one instance must be confined to a single thread; the
- * routing layer dedicates one worker to the shared base-rooted instance.
- *
- * @author solution
+ * D* Lite incremental shortest-path search (optimized k_m variant) after Koenig
+ * & Likhachev (AAAI 2002). Searches backward from a fixed goal (the
+ * fleet base), so g(s) estimates cost from s to goal. A single instance is
+ * shared across all returning vehicles: one repair after a road change benefits
+ * all of them.
+ * Not thread-safe; the routing layer confines all calls to one dedicated worker.
  */
 public final class DStarLite implements IncrementalPathfinder {
 
-    /** Positive infinity sentinel for unreachable / blocked costs. */
     private static final double INF = Double.POSITIVE_INFINITY;
 
-    /**
-     * A priority-queue entry pairing a vertex with the key it was inserted
-     * under. D* Lite uses lazy deletion: an entry is ignored on pop if the
-     * vertex is no longer in {@link #queued} with this exact key.
-     */
     private static final class Entry {
         final String s;
         final double k1;
@@ -84,7 +35,6 @@ public final class DStarLite implements IncrementalPathfinder {
         }
     }
 
-    /** Lexicographic ordering on keys: by k1, then k2. */
     private static int compareKeys(double a1, double a2, double b1, double b2) {
         if (a1 < b1) return -1;
         if (a1 > b1) return 1;
@@ -96,23 +46,20 @@ public final class DStarLite implements IncrementalPathfinder {
     private Graph graph;
     private String goal;
     private String start;
-    private String last;        // s_last: start when k_m was last accumulated
-    private double km;          // key modifier accumulating heuristic drift
+    private String last;
+    private double km;
 
     private Map<String, Double> g;
     private Map<String, Double> rhs;
 
-    // Reverse adjacency. Costs are re-read live, so these only record structure;
-    // usability/weight is checked separately against the live graph.
-    private Map<String, List<String>> predecessors;   // v -> list of u with edge u->v
-    private Map<String, List<String>> successors;     // u -> list of v with edge u->v (real out-edges)
+    // Static reverse adjacency; costs are read live against the graph.
+    private Map<String, List<String>> predecessors;
+    private Map<String, List<String>> successors;
 
     private PriorityQueue<Entry> open;
-    // Tracks the key each queued vertex currently holds, for lazy-deletion
-    // validity checks and for membership tests.
+    // Current key per queued vertex; used for lazy-deletion validity checks.
     private Map<String, double[]> queued;
 
-    // ---------------------------------------------------------------- lifecycle
 
     @Override
     public void initialize(Graph graph, String goal) {
@@ -131,19 +78,11 @@ public final class DStarLite implements IncrementalPathfinder {
 
         buildReverseAdjacency();
 
-        // Initialize: rhs(goal) = 0, everything else (g, rhs) defaults to INF
-        // lazily via getG / getRhs. Insert the goal.
         rhs.put(goal, 0.0);
         double[] k = calculateKey(goal);
         insert(goal, k[0], k[1]);
     }
 
-    /**
-     * Builds predecessor and successor adjacency once from the current graph
-     * structure. Runs in O(V + E). Called from {@link #initialize}; the
-     * structure is assumed static thereafter (roads are blocked/cleared, not
-     * created or destroyed structurally), while costs are read live.
-     */
     private void buildReverseAdjacency() {
         for (String u : graph.nodes()) {
             successors.computeIfAbsent(u, k -> new ArrayList<>());
@@ -151,13 +90,12 @@ public final class DStarLite implements IncrementalPathfinder {
                 String v = e.to();
                 successors.get(u).add(v);
                 predecessors.computeIfAbsent(v, k -> new ArrayList<>()).add(u);
-                // Ensure v has a successor entry too (may have no out-edges).
                 successors.computeIfAbsent(v, k -> new ArrayList<>());
             }
         }
     }
 
-    // ---------------------------------------------------------------- core math
+
 
     private double getG(String s) {
         Double v = g.get(s);
@@ -169,19 +107,11 @@ public final class DStarLite implements IncrementalPathfinder {
         return v == null ? INF : v;
     }
 
-    /**
-     * Admissible heuristic estimate of cost between {@code a} and {@code b}.
-     * Returns 0 -- see the class comment: no node coordinates exist, so zero is
-     * the only provably admissible choice. Isolated here for future
-     * substitution.
-     */
+    // Zero heuristic: no coordinates available, so 0 is the only admissible choice.
     private double h(String a, String b) {
         return 0.0;
     }
 
-    /**
-     * key(s) = [ min(g,rhs) + h(start, s) + km ,  min(g,rhs) ].
-     */
     private double[] calculateKey(String s) {
         double min = Math.min(getG(s), getRhs(s));
         double k1 = (min == INF) ? INF : min + h(start, s) + km;
@@ -189,14 +119,11 @@ public final class DStarLite implements IncrementalPathfinder {
         return new double[] { k1, k2 };
     }
 
-    /** Cost of road arc u -> v: live weight if usable, else +infinity. */
     private double cost(String u, String v) {
         if (!graph.isEdgeUsable(u, v)) {
             return INF;
         }
         double w = graph.getWeight(u, v);
-        // getWeight returns -1 if the arc is absent; usable already excludes
-        // that, but guard defensively.
         return (w < 0) ? INF : w;
     }
 
@@ -207,18 +134,12 @@ public final class DStarLite implements IncrementalPathfinder {
 
     private void remove(String s) {
         queued.remove(s);
-        // Entry is left in the heap and skipped lazily on pop.
     }
 
     private boolean isQueued(String s) {
         return queued.containsKey(s);
     }
 
-    /**
-     * UpdateVertex(u): recompute rhs(u) for a non-goal vertex as the best
-     * one-step lookahead over its successors in the search graph (its real
-     * out-edges u -> v: cost(u,v) + g(v)), then fix its queue membership.
-     */
     private void updateVertex(String u) {
         if (!u.equals(goal)) {
             double best = INF;
@@ -247,10 +168,6 @@ public final class DStarLite implements IncrementalPathfinder {
         }
     }
 
-    /**
-     * ComputeShortestPath(): expand locally inconsistent vertices in key order
-     * until the start vertex is consistent and no queued key precedes it.
-     */
     private void computeShortestPath() {
         while (!open.isEmpty()) {
             Entry top = peekValid();
@@ -271,8 +188,6 @@ public final class DStarLite implements IncrementalPathfinder {
             open.poll();
             String u = top.s;
 
-            // If its stored key is stale relative to a freshly computed key,
-            // reinsert with the corrected key (Figure 4, lines 12-14).
             double[] kNew = calculateKey(u);
             if (compareKeys(top.k1, top.k2, kNew[0], kNew[1]) < 0) {
                 insert(u, kNew[0], kNew[1]);
@@ -283,7 +198,6 @@ public final class DStarLite implements IncrementalPathfinder {
             double rhsu = getRhs(u);
 
             if (gu > rhsu) {
-                // Overconsistent: tighten g down to rhs, propagate to preds.
                 g.put(u, rhsu);
                 remove(u);
                 List<String> preds = predecessors.get(u);
@@ -293,7 +207,6 @@ public final class DStarLite implements IncrementalPathfinder {
                     }
                 }
             } else {
-                // Underconsistent: reset g to INF, propagate to preds and self.
                 g.put(u, INF);
                 List<String> preds = predecessors.get(u);
                 if (preds != null) {
@@ -306,11 +219,6 @@ public final class DStarLite implements IncrementalPathfinder {
         }
     }
 
-    /**
-     * Returns the valid top entry (one whose stored key still matches
-     * {@link #queued}), discarding stale lazy-deletion leftovers. Returns
-     * {@code null} if the queue holds no valid entries.
-     */
     private Entry peekValid() {
         while (!open.isEmpty()) {
             Entry top = open.peek();
@@ -318,7 +226,7 @@ public final class DStarLite implements IncrementalPathfinder {
             if (cur != null && cur[0] == top.k1 && cur[1] == top.k2) {
                 return top;
             }
-            open.poll(); // stale entry, discard
+            open.poll();
         }
         return null;
     }
@@ -327,26 +235,16 @@ public final class DStarLite implements IncrementalPathfinder {
 
     @Override
     public void updateEdge(String from, String to) {
-        // A change to arc (from -> to) affects the rhs of 'from' (its successor
-        // 'to' may now be cheaper/costlier or unreachable). Recompute the
-        // affected endpoint. Because search is backward, the vertex whose
-        // lookahead depends on arc (from->to) is 'from'.
         if (predecessors.isEmpty() && successors.isEmpty()) {
-            return; // not initialized
+            return;
         }
         updateVertex(from);
     }
 
     @Override
     public void nodeCollapsed(String node) {
-        // A collapse makes every arc incident to 'node' unusable. The vertices
-        // whose lookahead (rhs) actually changes are the *predecessors* of
-        // 'node' -- each of them may have just lost its cheapest successor.
-        // Updating only 'node' (as a self edge-change would) leaves those
-        // predecessors stale, so replan could still route a vehicle through the
-        // collapsed node. Re-evaluate every predecessor, plus 'node' itself.
         if (predecessors.isEmpty() && successors.isEmpty()) {
-            return; // not initialized
+            return;
         }
         List<String> preds = predecessors.get(node);
         if (preds != null) {
@@ -362,9 +260,6 @@ public final class DStarLite implements IncrementalPathfinder {
         if (start == null) {
             return null;
         }
-        // Accumulate km by the heuristic distance the start moved, then update
-        // s_last (Figure 4, lines 38-39). With h == 0 this is a no-op on km,
-        // but kept structurally correct for a future heuristic.
         if (!start.equals(this.start)) {
             this.km += h(this.last, start);
             this.last = start;
@@ -374,17 +269,11 @@ public final class DStarLite implements IncrementalPathfinder {
         computeShortestPath();
 
         if (getG(start) == INF) {
-            return null; // goal unreachable from start under current costs
+            return null;
         }
         return greedyPath(start);
     }
 
-    /**
-     * Extracts the path by greedy descent on g: from each vertex move to the
-     * successor minimising cost(s, s') + g(s'), until the goal is reached.
-     * Returns {@code null} if descent stalls (should not happen when
-     * g(start) is finite, but guarded against cycles).
-     */
     private List<String> greedyPath(String from) {
         ArrayList<String> path = new ArrayList<>();
         Set<String> guard = new HashSet<>();
@@ -414,7 +303,7 @@ public final class DStarLite implements IncrementalPathfinder {
                 return null;
             }
             if (!guard.add(bestNext)) {
-                return null; // revisited a node: no progress, bail
+                return null;
             }
             path.add(bestNext);
             s = bestNext;
@@ -422,10 +311,9 @@ public final class DStarLite implements IncrementalPathfinder {
         return path;
     }
 
+    // One-shot fallback, reinit if needed, then replan.
     @Override
     public List<String> findPath(Graph graph, String start, String goal) {
-        // One-shot use: (re)initialise to this goal if needed, then replan.
-        // Lets D* Lite stand in wherever a plain Pathfinder is expected.
         if (this.graph != graph || this.goal == null || !this.goal.equals(goal)) {
             initialize(graph, goal);
         }

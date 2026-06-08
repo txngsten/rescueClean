@@ -1,6 +1,6 @@
 package solution;
 
-/*
+/**
  * BFS for both outbound and return. Searches by hop count and ignores edge
  * weights, so paths are fewest-intersections rather than shortest-distance.
  * Included to show the cost of dropping weights: fast to compute, but the routes

@@ -13,23 +13,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Depth-first search returning <em>some</em> path from {@code start} to
- * {@code goal} (not necessarily short by hops or by cost).
- *
- * <p>DFS makes no optimality guarantee whatsoever: it commits to one branch and
- * follows it as deep as possible before backtracking, so the path it returns
- * can be wildly longer than necessary. Its only virtues are speed-to-first-path
- * on well-connected graphs and a small, predictable memory footprint (one
- * explicit stack rather than a cost-ordered heap). It is included as the
- * lower-quality extreme of the comparison: useful to show how much path quality
- * the weighted searches actually buy.
- *
- * <p>Implemented iteratively with an explicit {@link Deque} rather than
- * recursively, so that deep graphs (the 100k-node map) cannot overflow the call
- * stack. Uses {@link Graph#getEdges(String)} so blocked roads and collapsed
- * nodes are never traversed.
- *
- * @author solution
+ * Depth-first search returning some path from start to goal, will greedily exit once
+ * the goal found.
  */
 public final class DfsPathfinder implements Pathfinder {
 

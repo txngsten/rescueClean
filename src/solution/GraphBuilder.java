@@ -8,31 +8,26 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- *
- * @author lewi0146, leib0006
+ * Parses a GraphML file into a Graph. Edges carry a "d1" data key for distance
+ * weight; node elements are present in the file but only edges are needed to
+ * build the adjacency structure (addEdge creates both endpoints).
  */
 public class GraphBuilder {
 
     public static Graph buildFromGraphML(String file) throws JDOMException, IOException {
-        // the SAXBuilder is the easiest way to create the JDOM2 objects.
         SAXBuilder jdomBuilder = new SAXBuilder();
 
-        // was: Document jdomDocument = jdomBuilder.build(file)
         String normalised = file.replace('\\', File.separatorChar);
         Document jdomDocument = jdomBuilder.build(new File(normalised));
 
-        // The root element is the root of the document.
         Element graphxml = jdomDocument.getRootElement();
-
-        Namespace ns = graphxml.getNamespace(); // Namespace.getNamespace("http://foo.com");
-
+        Namespace ns = graphxml.getNamespace();
         Element graph = graphxml.getChild("graph", ns);
 
         List<Element> nodes = graph.getChildren("node", ns);
 
         for (Element e: nodes) {
             String id = e.getAttribute("id").getValue();
-            // do something here?
         }
 
         List<Element> edges = graph.getChildren("edge", ns);

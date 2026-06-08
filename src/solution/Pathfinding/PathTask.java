@@ -1,48 +1,20 @@
 package solution.Pathfinding;
 
-import java.util.List;
-
 /**
- * A unit of work submitted to the {@link RoutingEngine}.
- *
- * <p>Tasks fall into two priority tiers and several kinds. The tier decides
- * which internal queue the task waits in (return work is drained before
- * outbound work); the kind tells the worker what to do with it.
- *
- * <ul>
- *   <li>{@link Kind#OUTBOUND} - compute a base-&gt;building path (low priority).
- *       Always handled by a stateless one-shot pathfinder on the parallel pool.</li>
- *   <li>{@link Kind#RETURN} - compute a building-&gt;base path (high priority).
- *       Handled either on the parallel pool (one-shot return algorithms) or by
- *       the single dedicated D* Lite worker, depending on the engine's mode.</li>
- *   <li>{@link Kind#EDGE_CHANGE} - a single-arc road status change to feed into
- *       the shared D* Lite instance via {@code updateEdge}. Only used in D* Lite
- *       mode, and only ever runs on the dedicated worker so the instance stays
- *       confined to one thread. Carries the changed arc in {@link #from}/{@link #to}.</li>
- *   <li>{@link Kind#COLLAPSE} - a node-collapse notification to feed into the
- *       shared D* Lite instance via {@code nodeCollapsed}. Distinct from
- *       EDGE_CHANGE because a collapse invalidates every arc incident to the
- *       node, so all of the node's predecessors must be re-evaluated, not just
- *       one arc's tail. Carries the collapsed node in {@link #from}.</li>
- * </ul>
- *
- * <p>Tasks are immutable value carriers; the computed result is delivered
- * separately via the engine's result queue (see {@link PathResult}), never by
- * mutating the task.
- *
- * @author solution
+ * An immutable unit of work submitted to the RoutingEngine. Tasks are split into
+ * OUTBOUND (base->building, low priority) and RETURN (building->base, high
+ * priority), plus two D*-Lite-only types: EDGE_CHANGE and COLLAPSE, which feed
+ * map updates into the shared incremental search instance. The kind determines
+ * which internal queue the task waits in and which worker handles it.
  */
 public final class PathTask {
 
-    /** What the worker should do with this task. */
     public enum Kind {
-        /** Compute a path from base to a building (low priority). */
         OUTBOUND,
-        /** Compute a path from a vehicle's location back to base (high priority). */
         RETURN,
-        /** Apply a single-arc road-status change to the shared D* Lite instance. */
+        // D* Lite only
         EDGE_CHANGE,
-        /** Apply a node collapse to the shared D* Lite instance. */
+        // D* Lite only
         COLLAPSE
     }
 
@@ -65,49 +37,18 @@ public final class PathTask {
         this.createdAtNanos = System.nanoTime();
     }
 
-    /**
-     * Creates an outbound (base-&gt;building) compute task.
-     *
-     * @param vehicle the vehicle to dispatch
-     * @param start   the vehicle's current location (path start; the base)
-     * @param goal    the building to reach
-     * @return a new OUTBOUND task
-     */
     public static PathTask outbound(int vehicle, String start, String goal) {
         return new PathTask(Kind.OUTBOUND, vehicle, start, goal, null, null);
     }
 
-    /**
-     * Creates a return (building-&gt;base) compute task.
-     *
-     * @param vehicle the vehicle to bring home
-     * @param start   the vehicle's current location (path start)
-     * @param goal    the base
-     * @return a new RETURN task
-     */
     public static PathTask returnToBase(int vehicle, String start, String goal) {
         return new PathTask(Kind.RETURN, vehicle, start, goal, null, null);
     }
 
-    /**
-     * Creates an edge-change task to feed a single-arc road-status update into
-     * the shared D* Lite instance. Used only in D* Lite return mode.
-     *
-     * @param from the changed arc's source endpoint
-     * @param to   the changed arc's target endpoint
-     * @return a new EDGE_CHANGE task
-     */
     public static PathTask edgeChange(String from, String to) {
         return new PathTask(Kind.EDGE_CHANGE, -1, null, null, from, to);
     }
 
-    /**
-     * Creates a collapse task to feed a node collapse into the shared D* Lite
-     * instance. Used only in D* Lite return mode.
-     *
-     * @param node the collapsed node
-     * @return a new COLLAPSE task
-     */
     public static PathTask collapse(String node) {
         return new PathTask(Kind.COLLAPSE, -1, null, null, node, null);
     }

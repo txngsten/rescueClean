@@ -1,6 +1,6 @@
 package solution;
 
-/*
+/**
  * D* Lite for both outbound and return. Incremental: reuses search state across
  * road blocks/clears and collapses instead of replanning from scratch, so it
  * should hold up best as road damage rises. This is the same behaviour as the

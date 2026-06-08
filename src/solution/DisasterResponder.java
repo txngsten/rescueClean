@@ -4,15 +4,19 @@ import sim.Message;
 
 import java.util.concurrent.*;
 
+/**
+ * Base class for all disaster response strategies. Runs a dedicated comms thread
+ * that receives messages from the Simulator via a blocking queue and dispatches
+ * them to the subclass's handle() method. The comms thread is separate from the
+ * executor so that message receipt never blocks on path computation or sends.
+ */
 public abstract class DisasterResponder  {
-    // Runs blocking receive loop
     protected final Thread commsThread;
     protected String configFile;
-    // Bounded executor for work
     protected final ExecutorService executor;
 
-    protected BlockingQueue<Message> inMessageQueue; // outgoing messages to Simulator
-    protected BlockingQueue<Message> outMessageQueue;  // incoming messages from Simulator
+    protected BlockingQueue<Message> inMessageQueue;
+    protected BlockingQueue<Message> outMessageQueue;
 
     public DisasterResponder() {
         inMessageQueue = new LinkedBlockingQueue<Message>();

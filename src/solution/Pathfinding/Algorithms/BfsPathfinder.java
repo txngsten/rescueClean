@@ -13,23 +13,7 @@ import java.util.Queue;
 import java.util.Set;
 
 /**
- * Breadth-first search returning a path with the <em>fewest road segments</em>
- * (hops) from {@code start} to {@code goal}.
- *
- * <p><b>Important:</b> BFS treats every edge as unit cost and therefore ignores
- * the {@code weight} field entirely. On the artificial maps (edge weights drawn
- * around a mean of 100 with nonzero variance) the fewest-hops path is generally
- * <em>not</em> the least-distance path, so the route it returns can cost
- * meaningfully more travel time than Dijkstra's. It is included precisely so
- * that this trade-off can be measured: BFS explores far less structure than a
- * cost-ordered search and doubles as a fast "is the goal reachable at all?"
- * test, which is useful for pruning hopeless rescues before paying for a
- * weighted search.
- *
- * <p>Uses {@link Graph#getEdges(String)} so blocked roads and collapsed nodes
- * are never traversed.
- *
- * @author solution
+ * Breadth-first search returning the path with least amount of edges.
  */
 public final class BfsPathfinder implements Pathfinder {
 

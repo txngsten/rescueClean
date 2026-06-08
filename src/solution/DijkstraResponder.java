@@ -1,6 +1,6 @@
 package solution;
 
-/*
+/**
  * Dijkstra for both outbound and return. The optimal one-shot baseline: always
  * returns a minimum-cost path, recomputed fresh each time, so it's the yardstick
  * for route quality that the faster/suboptimal solutions are judged against.
