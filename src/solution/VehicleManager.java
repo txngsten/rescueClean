@@ -26,8 +26,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *       the index of the last waypoint the vehicle has confirmed reaching.
  *       Together these answer two questions cheaply: (a) "is a newly blocked
  *       road / collapsed node actually on this vehicle's <em>remaining</em>
- *       route?" - so we only proactively halt vehicles genuinely affected, and
- *       (b) "from which node do we recompute?" - the confirmed location.</li>
+ *       route, or about to be stepped into?" - so we only proactively halt
+ *       vehicles genuinely affected, and (b) "from which node do we recompute?"
+ *       - the confirmed location.</li>
  *   <li><b>goal</b> - the vehicle's current destination (a building when
  *       outbound, the base when returning), so a recompute knows where it is
  *       headed.</li>
@@ -194,11 +195,8 @@ public final class VehicleManager {
 
     /**
      * Handles a VEHICLE HALTED. The vehicle is now stationary at {@code location}
-     * and may receive a new PATH. We move it to AT_RESCUE if it halted at its
-     * outbound goal (final waypoint reached), otherwise to IDLE-at-current so the
-     * caller can decide a recompute. The distinction between "reached final
-     * waypoint" and "stopped early" is made by the caller via path/index; here
-     * we simply record the stop and clear any HALTING wait.
+     * and may receive a new PATH. The caller (responder) decides the follow-up
+     * mission via the dedicated transition helpers; here we just record the stop.
      *
      * @param vehicle  the halted vehicle
      * @param location where it halted (ground truth)
@@ -291,9 +289,10 @@ public final class VehicleManager {
     }
 
     /**
-     * Determines whether a node lies on a vehicle's remaining path (used for
-     * LOCATION COLLAPSED: a vehicle headed through a now-collapsed node must be
-     * halted and rerouted before it reaches the node and is destroyed).
+     * Determines whether a node lies anywhere on a vehicle's remaining path.
+     * Retained for completeness; the responder's collapse policy now uses the
+     * narrower {@link #nextStepEntersNode(int, String)} instead, to avoid
+     * halting vehicles for collapses many hops ahead.
      *
      * @param vehicle the vehicle to check
      * @param node    the node that collapsed
@@ -310,6 +309,32 @@ public final class VehicleManager {
             }
         }
         return false;
+    }
+
+    /**
+     * Determines whether the vehicle's <em>imminent next step</em> would move it
+     * into {@code node}. The imminent step is the segment from the last confirmed
+     * waypoint (the vehicle's current position) to the very next waypoint. This
+     * is the only case where a collapse demands a proactive halt: the vehicle is
+     * about to enter the collapsed node on its next move and the Simulator's
+     * per-segment validation would otherwise let it drive in and be destroyed.
+     *
+     * <p>Collapses further along the route are intentionally ignored here - they
+     * are handled reactively when the vehicle actually reaches that segment
+     * (WAYPOINT_INVALID), which both avoids a reroute storm and lets the reroute
+     * be computed from the vehicle's real position with up-to-date map state.
+     *
+     * @param vehicle the vehicle to check
+     * @param node    the node that collapsed
+     * @return true if the next unconfirmed waypoint equals {@code node}
+     */
+    public boolean nextStepEntersNode(int vehicle, String node) {
+        VehicleState vs = vehicles.get(vehicle);
+        if (vs == null || vs.path == null || vs.path.isEmpty()) {
+            return false;
+        }
+        int next = vs.confirmedIndex + 1;
+        return next < vs.path.size() && vs.path.get(next).equals(node);
     }
 
     /** @return all vehicle states (live view; treat as read-only). */

@@ -15,10 +15,15 @@ import java.util.List;
  *   <li>{@link Kind#RETURN} - compute a building-&gt;base path (high priority).
  *       Handled either on the parallel pool (one-shot return algorithms) or by
  *       the single dedicated D* Lite worker, depending on the engine's mode.</li>
- *   <li>{@link Kind#EDGE_CHANGE} - a road status change to feed into the shared
- *       D* Lite instance via {@code updateEdge}. Only used in D* Lite mode, and
- *       only ever runs on the dedicated worker so the instance stays confined to
- *       one thread. Carries the changed arc in {@link #from}/{@link #to}.</li>
+ *   <li>{@link Kind#EDGE_CHANGE} - a single-arc road status change to feed into
+ *       the shared D* Lite instance via {@code updateEdge}. Only used in D* Lite
+ *       mode, and only ever runs on the dedicated worker so the instance stays
+ *       confined to one thread. Carries the changed arc in {@link #from}/{@link #to}.</li>
+ *   <li>{@link Kind#COLLAPSE} - a node-collapse notification to feed into the
+ *       shared D* Lite instance via {@code nodeCollapsed}. Distinct from
+ *       EDGE_CHANGE because a collapse invalidates every arc incident to the
+ *       node, so all of the node's predecessors must be re-evaluated, not just
+ *       one arc's tail. Carries the collapsed node in {@link #from}.</li>
  * </ul>
  *
  * <p>Tasks are immutable value carriers; the computed result is delivered
@@ -35,16 +40,18 @@ public final class PathTask {
         OUTBOUND,
         /** Compute a path from a vehicle's location back to base (high priority). */
         RETURN,
-        /** Apply a road-status change to the shared D* Lite instance. */
-        EDGE_CHANGE
+        /** Apply a single-arc road-status change to the shared D* Lite instance. */
+        EDGE_CHANGE,
+        /** Apply a node collapse to the shared D* Lite instance. */
+        COLLAPSE
     }
 
     private final Kind kind;
-    private final int vehicle;     // vehicle this work concerns; -1 for EDGE_CHANGE
+    private final int vehicle;     // vehicle this work concerns; -1 for EDGE_CHANGE/COLLAPSE
     private final String start;    // path start (vehicle's current location)
     private final String goal;     // path goal
-    private final String from;     // EDGE_CHANGE: changed arc source
-    private final String to;       // EDGE_CHANGE: changed arc target
+    private final String from;     // EDGE_CHANGE: arc source; COLLAPSE: collapsed node
+    private final String to;       // EDGE_CHANGE: arc target; unused for COLLAPSE
     private final long createdAtNanos; // for latency measurement / FIFO tie-breaking
 
     private PathTask(Kind kind, int vehicle, String start, String goal,
@@ -83,8 +90,8 @@ public final class PathTask {
     }
 
     /**
-     * Creates an edge-change task to feed a road-status update into the shared
-     * D* Lite instance. Used only in D* Lite return mode.
+     * Creates an edge-change task to feed a single-arc road-status update into
+     * the shared D* Lite instance. Used only in D* Lite return mode.
      *
      * @param from the changed arc's source endpoint
      * @param to   the changed arc's target endpoint
@@ -92,6 +99,17 @@ public final class PathTask {
      */
     public static PathTask edgeChange(String from, String to) {
         return new PathTask(Kind.EDGE_CHANGE, -1, null, null, from, to);
+    }
+
+    /**
+     * Creates a collapse task to feed a node collapse into the shared D* Lite
+     * instance. Used only in D* Lite return mode.
+     *
+     * @param node the collapsed node
+     * @return a new COLLAPSE task
+     */
+    public static PathTask collapse(String node) {
+        return new PathTask(Kind.COLLAPSE, -1, null, null, node, null);
     }
 
     public Kind kind()            { return kind; }
@@ -107,6 +125,8 @@ public final class PathTask {
         switch (kind) {
             case EDGE_CHANGE:
                 return "EDGE_CHANGE(" + from + "->" + to + ")";
+            case COLLAPSE:
+                return "COLLAPSE(" + from + ")";
             case OUTBOUND:
                 return "OUTBOUND(v" + vehicle + " " + start + "->" + goal + ")";
             case RETURN:

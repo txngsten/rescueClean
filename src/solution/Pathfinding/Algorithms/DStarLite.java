@@ -5,9 +5,11 @@ import solution.Edge;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 
 /**
  * D* Lite incremental shortest-path search (optimized, {@code k_m} variant)
@@ -26,13 +28,13 @@ import java.util.PriorityQueue;
  *       search graph</em>, which are the <em>predecessors in the road graph</em>
  *       (edges <em>into</em> a vertex). {@link Graph} stores out-edges only, so
  *       a reverse adjacency is built once at {@link #initialize} from
- *        + {@link Graph#allEdges(String)} in one O(E)
+ *       {@link Graph#nodes()} + {@link Graph#allEdges(String)} in one O(E)
  *       pass.</li>
  *   <li><b>Live costs.</b> The reverse structure is static, but each arc cost
- *       {@code c(u,v)} is read live via
- *       -- a blocked or collapsed arc reads as {@code +infinity}. This is why
- *       D* Lite needs the unfiltered {@code allEdges}: it must see the arc in
- *       order to notice its cost became infinite.</li>
+ *       {@code c(u,v)} is read live via the graph -- a blocked or collapsed arc
+ *       reads as {@code +infinity}. This is why D* Lite needs the unfiltered
+ *       {@code allEdges}: it must see the arc in order to notice its cost became
+ *       infinite.</li>
  *   <li><b>Heuristic.</b> The GraphML nodes carry no coordinates
  *       ({@code <node id="..."/>} only), so the only heuristic we can prove
  *       admissible is {@code h == 0}. With a zero heuristic D* Lite is still
@@ -42,6 +44,16 @@ import java.util.PriorityQueue;
  *       coordinate-based admissible heuristic can be substituted later if node
  *       positions ever become available, with no other change.</li>
  * </ul>
+ *
+ * <h2>Collapse handling</h2>
+ * A blocked single arc only changes the lookahead of its tail vertex, so
+ * {@link #updateEdge(String, String)} updates exactly that vertex. A
+ * <em>collapse</em> is different: every arc into and out of the node becomes
+ * unusable at once, so the cheapest successor of <em>each predecessor</em> of
+ * the node may have just vanished. {@link #nodeCollapsed(String)} therefore
+ * re-evaluates all predecessors of the collapsed node (and the node itself),
+ * which is what keeps {@code replan} from handing back a route that still walks
+ * through a collapsed node and triggering a destroy/replan feedback loop.
  *
  * <h2>Concurrency</h2>
  * This class holds mutable search state and is <b>not</b> safe for concurrent
@@ -90,9 +102,8 @@ public final class DStarLite implements IncrementalPathfinder {
     private Map<String, Double> g;
     private Map<String, Double> rhs;
 
-    // Reverse adjacency: predecessors.get(v) lists (u, originalWeight) for every
-    // road edge u -> v. Costs are re-read live, so the stored weight is only the
-    // map's nominal weight; usability is checked separately.
+    // Reverse adjacency. Costs are re-read live, so these only record structure;
+    // usability/weight is checked separately against the live graph.
     private Map<String, List<String>> predecessors;   // v -> list of u with edge u->v
     private Map<String, List<String>> successors;     // u -> list of v with edge u->v (real out-edges)
 
@@ -327,6 +338,26 @@ public final class DStarLite implements IncrementalPathfinder {
     }
 
     @Override
+    public void nodeCollapsed(String node) {
+        // A collapse makes every arc incident to 'node' unusable. The vertices
+        // whose lookahead (rhs) actually changes are the *predecessors* of
+        // 'node' -- each of them may have just lost its cheapest successor.
+        // Updating only 'node' (as a self edge-change would) leaves those
+        // predecessors stale, so replan could still route a vehicle through the
+        // collapsed node. Re-evaluate every predecessor, plus 'node' itself.
+        if (predecessors.isEmpty() && successors.isEmpty()) {
+            return; // not initialized
+        }
+        List<String> preds = predecessors.get(node);
+        if (preds != null) {
+            for (String p : preds) {
+                updateVertex(p);
+            }
+        }
+        updateVertex(node);
+    }
+
+    @Override
     public List<String> replan(String start) {
         if (start == null) {
             return null;
@@ -356,7 +387,7 @@ public final class DStarLite implements IncrementalPathfinder {
      */
     private List<String> greedyPath(String from) {
         ArrayList<String> path = new ArrayList<>();
-        java.util.HashSet<String> guard = new java.util.HashSet<>();
+        Set<String> guard = new HashSet<>();
         String s = from;
         path.add(s);
         guard.add(s);

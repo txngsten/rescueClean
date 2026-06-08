@@ -4,12 +4,11 @@ import org.jdom2.JDOMException;
 import sim.Message;
 import util.ConfigurationInfo;
 import util.Pair;
-import solution.Pathfinding.Pathfinder;
-import solution.Pathfinding.IncrementalPathfinder;
-import solution.Pathfinding.DijkstraPathfinder;
-import solution.Pathfinding.BfsPathfinder;
-import solution.Pathfinding.DfsPathfinder;
-import solution.Pathfinding.DStarLite;
+import solution.Pathfinding.Algorithms.Pathfinder;
+import solution.Pathfinding.Algorithms.DijkstraPathfinder;
+import solution.Pathfinding.Algorithms.BfsPathfinder;
+import solution.Pathfinding.Algorithms.DfsPathfinder;
+import solution.Pathfinding.Algorithms.DStarLite;
 import solution.Pathfinding.RoutingEngine;
 import solution.Pathfinding.PathTask;
 import solution.Pathfinding.PathResult;
@@ -42,19 +41,31 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * During {@link #setup} a single-source Dijkstra from the base is computed and
  * cached (base-&gt;building distances and predecessors). Outbound dispatches use
  * this cache directly while it is valid - it is the fastest possible outbound
- * route source and costs O(V) memory. The cache is invalidated wholesale the
- * first time a road block or location collapse touches a node that participates
- * in it; thereafter outbound requests are routed through the engine like
- * everything else. Returns and reroutes <em>never</em> use the precompute - they
- * always go through the configured algorithm, which keeps them correct on the
- * one-way Manhattan map and makes the per-algorithm performance comparison
- * clean.
+ * route source and costs O(V) memory. The cache is invalidated only when a
+ * block or collapse actually lands on the predecessor tree the cache encodes
+ * (see {@link #invalidatePrecomputeIfAffected}); an unrelated block elsewhere on
+ * the map leaves it valid. Returns and reroutes <em>never</em> use the
+ * precompute - they always go through the configured algorithm, which keeps them
+ * correct on the one-way Manhattan map and makes the per-algorithm performance
+ * comparison clean.
+ *
+ * <h2>Collapse policy</h2>
+ * When a location collapses we proactively halt only those moving vehicles whose
+ * <em>imminent</em> next step (the very next unconfirmed segment) leads into the
+ * collapsed node. A collapse many hops ahead on a vehicle's route is left to the
+ * Simulator's per-segment validation, which will halt the vehicle (via
+ * WAYPOINT_INVALID) exactly when the bad segment becomes current - at which
+ * point we reroute from the vehicle's real position with fresh information.
+ * Halting the whole affected sub-fleet on every collapse produced a reroute
+ * storm that serialised behind the single D* Lite worker; narrowing to the
+ * imminent step removes that storm without sacrificing any vehicle (a vehicle is
+ * only destroyed when it actually enters a collapsed node).
  *
  * <h2>Algorithm selection</h2>
  * The {@link #OUTBOUND_ALGO} and {@link #RETURN_ALGO} constants choose the
  * algorithms. The {@link RoutingEngine}'s threading model follows from
- * {@code RETURN_ALGO}: a  return runs on a single dedicated worker
- * (D* Lite is stateful), while the one-shot returns run on the parallel pool.
+ * {@code RETURN_ALGO}: a D* Lite return runs on a single dedicated worker
+ * (D* Lite is stateful), while one-shot returns run on the parallel pool.
  * Changing these constants and recompiling yields the different
  * {@code DisasterResponder} behaviours the assessment asks to compare; a second
  * subclass can simply extend this class and override the constants, or set them
@@ -70,15 +81,16 @@ public class MyDisasterResponder extends DisasterResponder {
     public enum Algo { DIJKSTRA, BFS, DFS, DSTAR }
 
     /** Algorithm used for base-&gt;building paths when the precompute is invalid. */
-    protected static final Algo OUTBOUND_ALGO = Algo.DIJKSTRA;
+    protected static final Algo OUTBOUND_ALGO = Algo.DSTAR;
 
     /** Algorithm used for building-&gt;base paths and all rerouting. */
     protected static final Algo RETURN_ALGO = Algo.DSTAR;
 
     /**
-     * Whether to proactively halt and reroute a vehicle when a location on its
-     * remaining path collapses (saving the vehicle if a route around exists).
-     * When false, such a vehicle is left to drive into the collapse and be lost.
+     * Whether to proactively halt and reroute a vehicle when its imminent next
+     * segment leads into a node that has collapsed (saving the vehicle if a
+     * route around exists). When false, such a vehicle is left to drive into the
+     * collapse and be lost.
      */
     protected static final boolean PROACTIVE_COLLAPSE_REROUTE = true;
 
@@ -95,7 +107,7 @@ public class MyDisasterResponder extends DisasterResponder {
     private final ConcurrentHashMap<String, Double> distFromBase = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> parent = new ConcurrentHashMap<>();
     private final AtomicBoolean precomputeDone = new AtomicBoolean(false);
-    /** False once a block/collapse has invalidated the precompute. */
+    /** False once a block/collapse on the cached predecessor tree invalidates it. */
     private final AtomicBoolean precomputeValid = new AtomicBoolean(false);
 
     private VehicleManager fleet;
@@ -221,12 +233,37 @@ public class MyDisasterResponder extends DisasterResponder {
         return path;
     }
 
-    /** Invalidates the precompute if {@code node} participates in it. */
+    /**
+     * Invalidates the precompute only if the changed node actually participates
+     * in the cached base-rooted shortest-path tree as a <em>tree node</em> -
+     * i.e. it is the origin, or it appears as a parent of some node in the tree.
+     *
+     * <p>The earlier version also invalidated whenever the node merely had a
+     * distance entry, but single-source Dijkstra settles essentially every
+     * reachable node, so that condition fired on almost any block anywhere on
+     * the map and killed the outbound fast-path on the first damage event. A
+     * node that is only a <em>leaf</em> of the tree (never anyone's parent) being
+     * blocked does not change any other node's cached route, so the cache stays
+     * usable for every other destination. If a blocked node is an interior tree
+     * node, the routes that pass through it are stale, so we drop the cache and
+     * fall back to the engine for outbound from then on.
+     */
     private void invalidatePrecomputeIfAffected(String node) {
-        if (precomputeValid.get()
-                && (origin.equals(node) || parent.containsKey(node) || distFromBase.containsKey(node))) {
+        if (!precomputeValid.get()) {
+            return;
+        }
+        if (origin.equals(node)) {
+            precomputeValid.set(false);
+            return;
+        }
+        // Interior tree node: some settled node has 'node' as its parent.
+        // (parent is the predecessor map: child -> parent.) If 'node' is a value
+        // in that map, routes descend through it and may now be stale.
+        if (parent.containsValue(node)) {
             precomputeValid.set(false);
         }
+        // Otherwise 'node' is a leaf (or absent): no cached route passes through
+        // it, so the cache remains valid for all other destinations.
     }
 
     // ============================================================ message handling
@@ -312,21 +349,22 @@ public class MyDisasterResponder extends DisasterResponder {
         if (b.length < 3 || !"COLLAPSED".equals(b[2])) return;
         String node = b[1];
         roadMap.markCollapsed(node);
-        engine.reportEdgeChange(node, node); // nudge D* (collapse affects costs)
+        engine.reportCollapse(node);            // propagate to all predecessors in D* mode
         invalidatePrecomputeIfAffected(node);
 
         // P3: a vehicle DESTROYED is handled elsewhere; here we try to SAVE any
-        // vehicle whose remaining path runs through the collapsed node, by
-        // proactively halting it and rerouting once it stops.
+        // vehicle whose IMMINENT next step would drive into the collapsed node,
+        // by proactively halting it and rerouting once it stops. We deliberately
+        // do NOT scan whole remaining paths: a collapse several hops ahead is
+        // caught by the Simulator's per-segment validation when the vehicle
+        // actually reaches that segment, and halting the whole affected
+        // sub-fleet at once floods the single D* worker with reroutes.
         if (PROACTIVE_COLLAPSE_REROUTE) {
             for (VehicleManager.VehicleState vs : fleet.all()) {
                 if (vs.state() == VehicleManager.MissionState.LOST) continue;
                 boolean moving = vs.state() == VehicleManager.MissionState.DISPATCHED_OUT
                         || vs.state() == VehicleManager.MissionState.RETURNING;
-                if (moving && fleet.nodeOnRemainingPath(vs.number(), node)) {
-                    // Decide the vehicle's intended goal after halting: if it was
-                    // outbound to a (now-or-still valid) building, keep that goal;
-                    // if returning, goal is base.
+                if (moving && fleet.nextStepEntersNode(vs.number(), node)) {
                     String goal = (vs.state() == VehicleManager.MissionState.RETURNING)
                             ? origin
                             : assignedRescue.getOrDefault(vs.number(), origin);

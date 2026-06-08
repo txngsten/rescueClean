@@ -16,9 +16,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <h2>Two tiers</h2>
  * Work is split across two FIFO queues:
  * <ul>
- *   <li><b>high</b> - return-to-base (and, in D* Lite mode, edge-change) tasks.
- *       A stranded vehicle that cannot get home is more urgent than dispatching
- *       a fresh one.</li>
+ *   <li><b>high</b> - return-to-base (and, in D* Lite mode, edge-change /
+ *       collapse) tasks. A stranded vehicle that cannot get home is more urgent
+ *       than dispatching a fresh one, and map updates must be applied before the
+ *       returns that depend on them.</li>
  *   <li><b>low</b> - outbound base-&gt;building tasks.</li>
  * </ul>
  * The number of people per rescue is constant across the simulation, so there
@@ -31,10 +32,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li><b>D* Lite return mode</b> (when the configured return strategy is an
  *       {@link IncrementalPathfinder}): the shared base-rooted D* Lite instance
  *       is stateful and not thread-safe, so a <em>single dedicated worker</em>
- *       owns it and drains the high queue (returns + edge-changes). Outbound
- *       work still runs on the parallel pool. The comms thread never touches
- *       D* Lite; road changes are submitted as EDGE_CHANGE tasks so the
- *       dedicated worker applies {@code updateEdge} on its own thread.</li>
+ *       owns it and drains the high queue (returns + edge-changes + collapses).
+ *       Outbound work still runs on the parallel pool. The comms thread never
+ *       touches D* Lite; map changes are submitted as EDGE_CHANGE / COLLAPSE
+ *       tasks so the dedicated worker applies them on its own thread.
+ *
+ *       <p>Crucially, the worker drains <em>all</em> immediately-available map
+ *       updates before servicing a return: D* Lite is designed to absorb a batch
+ *       of edge-cost changes and then run a single {@code computeShortestPath}
+ *       (which {@code replan} triggers). Applying every queued update first means
+ *       one repair, not one repair per change.</li>
  *   <li><b>One-shot return mode</b> (Dijkstra / BFS / DFS returns): the return
  *       algorithm is stateless, so returns are parallelisable. There is no
  *       dedicated worker; the parallel pool drains <em>both</em> queues,
@@ -127,7 +134,7 @@ public final class RoutingEngine {
 
         if (dStarMode) {
             // Dedicated worker: owns and initialises the D* Lite instance, then
-            // drains the high queue (returns + edge-changes) forever.
+            // drains the high queue (returns + edge-changes + collapses) forever.
             dedicatedReturnThread = new Thread(this::dedicatedReturnLoop,
                     "RoutingEngine-DStarReturnWorker");
             dedicatedReturnThread.setDaemon(true);
@@ -166,10 +173,11 @@ public final class RoutingEngine {
     }
 
     /**
-     * Reports a road-status change. In D* mode this becomes a high-priority
-     * EDGE_CHANGE task so the dedicated worker applies {@code updateEdge} on its
-     * own thread. In one-shot mode there is no incremental state to update, so
-     * this is a no-op (the one-shot searches read the live graph each time).
+     * Reports a single-arc road-status change. In D* mode this becomes a
+     * high-priority EDGE_CHANGE task so the dedicated worker applies
+     * {@code updateEdge} on its own thread. In one-shot mode there is no
+     * incremental state to update, so this is a no-op (the one-shot searches
+     * read the live graph each time).
      *
      * @param from changed arc source
      * @param to   changed arc target
@@ -181,12 +189,31 @@ public final class RoutingEngine {
         // one-shot mode: nothing to do; graph already mutated by caller.
     }
 
+    /**
+     * Reports a node collapse. In D* mode this becomes a high-priority COLLAPSE
+     * task so the dedicated worker applies {@code nodeCollapsed} on its own
+     * thread, re-evaluating every predecessor of the collapsed node. In one-shot
+     * mode it is a no-op (the live graph already excludes the collapsed node).
+     *
+     * @param node the collapsed node
+     */
+    public void reportCollapse(String node) {
+        if (dStarMode) {
+            highQueue.add(PathTask.collapse(node));
+        }
+        // one-shot mode: nothing to do; graph already marks the node collapsed.
+    }
+
     // ---------------------------------------------------------------- worker loops
 
     /**
      * Dedicated D* Lite worker: initialises the instance, then processes the
-     * high queue. EDGE_CHANGE tasks call {@code updateEdge}; RETURN tasks call
-     * {@code replan}. All D* Lite access is confined to this single thread.
+     * high queue. EDGE_CHANGE / COLLAPSE tasks update the instance; RETURN tasks
+     * call {@code replan}. All D* Lite access is confined to this single thread.
+     *
+     * <p>Before answering a RETURN, the worker drains every map update that is
+     * already waiting (without blocking for more), so a burst of road changes is
+     * folded into a single repair when {@code replan} runs.
      */
     private void dedicatedReturnLoop() {
         incrementalReturn.initialize(graph, base);
@@ -196,9 +223,16 @@ public final class RoutingEngine {
                 if (t == POISON) {
                     break;
                 }
-                if (t.kind() == PathTask.Kind.EDGE_CHANGE) {
-                    incrementalReturn.updateEdge(t.from(), t.to());
-                } else if (t.kind() == PathTask.Kind.RETURN) {
+                if (applyIfMapUpdate(t)) {
+                    // Opportunistically apply any further map updates queued
+                    // right behind this one, so we repair once for the batch.
+                    drainPendingMapUpdates();
+                    continue;
+                }
+                if (t.kind() == PathTask.Kind.RETURN) {
+                    // Make sure all currently-known map updates are applied
+                    // before we repair, then replan once.
+                    drainPendingMapUpdates();
                     long t0 = System.nanoTime();
                     List<String> path = incrementalReturn.replan(t.start());
                     long dt = System.nanoTime() - t0;
@@ -209,6 +243,44 @@ public final class RoutingEngine {
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Applies a task to the D* Lite instance if it is a map update (EDGE_CHANGE
+     * or COLLAPSE) and returns true; returns false for anything else.
+     */
+    private boolean applyIfMapUpdate(PathTask t) {
+        if (t.kind() == PathTask.Kind.EDGE_CHANGE) {
+            incrementalReturn.updateEdge(t.from(), t.to());
+            return true;
+        }
+        if (t.kind() == PathTask.Kind.COLLAPSE) {
+            incrementalReturn.nodeCollapsed(t.from());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Applies every map update (EDGE_CHANGE / COLLAPSE) currently in the high
+     * queue and re-enqueues all other tasks (RETURN / POISON) in their original
+     * relative order, without blocking.
+     *
+     * <p>The queue is snapshotted once via {@code drainTo}, so this terminates
+     * even if it is all returns; map updates are applied to the D* Lite instance
+     * and the remaining tasks are added back to the tail preserving their order.
+     * A one-position shift of returns relative to a freshly-arriving update is
+     * harmless: the next {@code replan} re-drains before computing.
+     */
+    private void drainPendingMapUpdates() {
+        java.util.List<PathTask> snapshot = new java.util.ArrayList<>();
+        highQueue.drainTo(snapshot);
+        for (PathTask t : snapshot) {
+            if (!applyIfMapUpdate(t)) {
+                // Preserve non-update tasks (returns, poison) for processing.
+                highQueue.add(t);
+            }
         }
     }
 
@@ -259,8 +331,8 @@ public final class RoutingEngine {
 
     /** Runs a one-shot compute and publishes the result. */
     private void runOneShot(PathTask t, Pathfinder algo) {
-        if (t.kind() == PathTask.Kind.EDGE_CHANGE) {
-            return; // one-shot mode ignores edge-change tasks
+        if (t.kind() == PathTask.Kind.EDGE_CHANGE || t.kind() == PathTask.Kind.COLLAPSE) {
+            return; // one-shot mode ignores map-update tasks
         }
         long t0 = System.nanoTime();
         List<String> path = algo.findPath(graph, t.start(), t.goal());
