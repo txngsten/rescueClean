@@ -63,13 +63,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <h2>Algorithm selection</h2>
  * The {@link #OUTBOUND_ALGO} and {@link #RETURN_ALGO} constants choose the
- * algorithms. The {@link RoutingEngine}'s threading model follows from
- * {@code RETURN_ALGO}: a D* Lite return runs on a single dedicated worker
- * (D* Lite is stateful), while one-shot returns run on the parallel pool.
- * Changing these constants and recompiling yields the different
- * {@code DisasterResponder} behaviours the assessment asks to compare; a second
- * subclass can simply extend this class and override the constants, or set them
- * here directly.
+ * algorithms, read via the overridable {@link #outboundAlgo()} /
+ * {@link #returnAlgo()} accessors. The {@link RoutingEngine}'s threading model
+ * follows from the return algorithm: a D* Lite return runs on a single dedicated
+ * worker (D* Lite is stateful), while one-shot returns run on the parallel pool.
+ * A subclass selects a different {@code DisasterResponder} behaviour simply by
+ * overriding the two accessors (see {@code DijkstraResponder}, {@code BfsResponder},
+ * {@code HybridResponder}, {@code DStarResponder}); the constants here are the
+ * defaults used when nothing is overridden.
  *
  * @author solution
  */
@@ -81,7 +82,7 @@ public class MyDisasterResponder extends DisasterResponder {
     public enum Algo { DIJKSTRA, BFS, DFS, DSTAR }
 
     /** Algorithm used for base-&gt;building paths when the precompute is invalid. */
-    protected static final Algo OUTBOUND_ALGO = Algo.DSTAR;
+    protected static final Algo OUTBOUND_ALGO = Algo.DIJKSTRA;
 
     /** Algorithm used for building-&gt;base paths and all rerouting. */
     protected static final Algo RETURN_ALGO = Algo.DSTAR;
@@ -142,9 +143,9 @@ public class MyDisasterResponder extends DisasterResponder {
 
         fleet = new VehicleManager(origin, ConfigurationInfo.NUMBER_OF_VEHICLES);
 
-        // Build the routing engine in the mode dictated by RETURN_ALGO.
-        Pathfinder outbound = makePathfinder(OUTBOUND_ALGO);
-        Pathfinder ret = makePathfinder(RETURN_ALGO);
+        // Build the routing engine in the mode dictated by the return algorithm.
+        Pathfinder outbound = makePathfinder(outboundAlgo());
+        Pathfinder ret = makePathfinder(returnAlgo());
         engine = new RoutingEngine(roadMap, origin, outbound, ret, POOL_SIZE);
         engine.start();
 
@@ -154,6 +155,17 @@ public class MyDisasterResponder extends DisasterResponder {
         final Graph g = roadMap;
         final String src = origin;
         executor.submit(() -> dijkstraFromBase(g, src));
+    }
+
+    // Algorithm selection goes through these so subclasses can override the
+    // choice (static final constants can't be overridden). Defaults return the
+    // constants above, so MyDisasterResponder's own behaviour is unchanged.
+    protected Algo outboundAlgo() {
+        return OUTBOUND_ALGO;
+    }
+
+    protected Algo returnAlgo() {
+        return RETURN_ALGO;
     }
 
     /** Instantiates a fresh pathfinder for the given algorithm choice. */
