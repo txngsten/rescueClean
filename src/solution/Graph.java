@@ -103,7 +103,7 @@ public class Graph {
         }
     }
 
-    public Set<String> node() {
+    public Set<String> nodes() {
         lock.readLock().lock();
         try {
             return new HashSet<>(graph.keySet());
@@ -112,7 +112,7 @@ public class Graph {
         }
     }
 
-    public boolean isEdgeUnusable(String src, String dst) {
+    public boolean isEdgeUsable(String src, String dst) {
         lock.readLock().lock();
         try {
             if (collapsed.contains(src) || collapsed.contains(dst)) {
