@@ -90,6 +90,51 @@ public class Graph {
         }
     }
 
+    public List<Edge> allEdges(String node) {
+        lock.readLock().lock();
+        try {
+            ArrayList<Edge> edges = graph.get(node);
+            if (edges == null) {
+                return Collections.emptyList();
+            }
+            return new ArrayList<>(edges);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public Set<String> node() {
+        lock.readLock().lock();
+        try {
+            return new HashSet<>(graph.keySet());
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public boolean isEdgeUnusable(String src, String dst) {
+        lock.readLock().lock();
+        try {
+            if (collapsed.contains(src) || collapsed.contains(dst)) {
+                return false;
+            }
+
+            ArrayList<Edge> edges = graph.get(src);
+            if (edges == null) {
+                return false;
+            }
+
+            for (Edge e : edges) {
+                if (e.to().equals(dst)) {
+                    return e.isOpen();
+                }
+            }
+            return false;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
     public double getWeight(String src, String dst) {
         lock.readLock().lock();
         try {
