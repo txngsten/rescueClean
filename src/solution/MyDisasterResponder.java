@@ -60,6 +60,7 @@ public class MyDisasterResponder extends DisasterResponder {
     private final AtomicBoolean precomputeDone = new AtomicBoolean(false);
     private final AtomicBoolean precomputeValid = new AtomicBoolean(false);
 
+    private final MissionStats stats = new MissionStats();
     private VehicleManager fleet;
     private RoutingEngine engine;
     private Thread senderThread;
@@ -231,6 +232,7 @@ public class MyDisasterResponder extends DisasterResponder {
             return;
         }
         assignedRescue.put(v, loc);
+        stats.recordOutboundAttempt();
         List<String> pre = outboundFromPrecompute(loc);
         if (pre != null) {
             fleet.onDispatched(v, pre, loc, false);
@@ -339,6 +341,7 @@ public class MyDisasterResponder extends DisasterResponder {
                 break;
             }
             case "RETURNED": {
+                stats.recordReturnSuccess();
                 fleet.onReturned(v);
                 assignedRescue.remove(v);
                 rerouteOnHalt.remove(v);
@@ -365,8 +368,10 @@ public class MyDisasterResponder extends DisasterResponder {
         // Reached the rescue building -> begin a return mission.
         if (rescueGoal != null && loc.equals(rescueGoal)
                 && vs.state() == VehicleManager.MissionState.DISPATCHED_OUT) {
+            stats.recordOutboundSuccess();
             fleet.setAtRescue(v);
             // Submit a return-to-base computation from the building.
+            stats.recordReturnAttempt();
             engine.submitReturn(v, loc);
             return;
         }
@@ -487,6 +492,7 @@ public class MyDisasterResponder extends DisasterResponder {
         if (engine != null) {
             engine.shutdown();
         }
+        stats.printSummary();
         super.shutdown();
     }
 
