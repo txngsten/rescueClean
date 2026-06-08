@@ -1,5 +1,9 @@
 package solution;
 
+/**
+ * A very simple Edge helper class. Used to abstract edges/roads away from being raw values in lists.
+ */
+
 public class Edge {
     private final String dst;
     private final double weight;

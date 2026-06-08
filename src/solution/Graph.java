@@ -8,6 +8,13 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+/**
+ * A thread safe graph class that makes use of a Reentrant Read/Write lock to be thread safe
+ * without heavy performance costs. All methods follow a try/finnaly approach and use the read or write
+ * lock depending on if the method mutates graph state or not. Most methods are intuitive and don't
+ * require extra comments.
+ */
+
 public class Graph {
     private final HashMap<String, ArrayList<Edge>> graph;
     private final Set<String> collapsed;
@@ -39,6 +46,8 @@ public class Graph {
         }
     }
 
+    // This is to make blocking and unblocking roads easier than repeated removal
+    // and addition of these edges.
     public void setEdgeOpen(String src, String dst, boolean open) {
         lock.writeLock().lock();
         try {
@@ -57,6 +66,7 @@ public class Graph {
         }
     }
 
+    // For when a location becomes collapsed.
     public void markCollapsed(String node) {
         lock.writeLock().lock();
         try {
@@ -103,6 +113,7 @@ public class Graph {
         }
     }
 
+    // Returns a set of all nodes, D* Lite uses this.
     public Set<String> nodes() {
         lock.readLock().lock();
         try {
@@ -112,6 +123,7 @@ public class Graph {
         }
     }
 
+    // Needed for D* Lite.
     public boolean isEdgeUsable(String src, String dst) {
         lock.readLock().lock();
         try {
