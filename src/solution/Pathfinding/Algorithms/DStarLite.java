@@ -1,4 +1,4 @@
-package solution.Pathfinding;
+package solution.Pathfinding.Algorithms;
 
 import solution.Graph;
 import solution.Edge;

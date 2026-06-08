@@ -1,6 +1,8 @@
 package solution.Pathfinding;
 
 import solution.Graph;
+import solution.Pathfinding.Algorithms.IncrementalPathfinder;
+import solution.Pathfinding.Algorithms.Pathfinder;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
