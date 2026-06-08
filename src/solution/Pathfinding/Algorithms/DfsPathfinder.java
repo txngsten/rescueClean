@@ -62,6 +62,9 @@ public final class DfsPathfinder implements Pathfinder {
                 String v = e.to();
                 if (visited.add(v)) {
                     prev.put(v, u);
+                    if (v.equals(goal)) {
+                        return reconstruct(prev, start, goal);
+                    }
                     stack.push(v);
                 }
             }
