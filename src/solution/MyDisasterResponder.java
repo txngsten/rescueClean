@@ -500,8 +500,8 @@ public class MyDisasterResponder extends DisasterResponder {
         if (engine != null) {
             engine.shutdown();
         }
-        stats.printSummary();
         super.shutdown();
+        stats.printSummary();
     }
 
     private static int parseInt(String s) {
