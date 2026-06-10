@@ -294,13 +294,21 @@ public class MyDisasterResponder extends DisasterResponder {
             invalidatePrecomputeIfAffected(from);
             invalidatePrecomputeIfAffected(to);
         }
-        // Vehicle auto-halts at 'from'; we reroute on the ensuing VEHICLE HALTED.
+        // The sim halts the vehicle internally at 'from' but sends NO VehicleHalted
+        // message for a blocked edge (only this WAYPOINT_INVALID), so we must reroute
+        // now rather than wait for a HALTED that will never arrive. The vehicle is
+        // stopped at 'from', so that is the reroute origin.
         VehicleManager.VehicleState vs = fleet.get(v);
         if (vs == null || vs.state() == VehicleManager.MissionState.LOST) return;
+        fleet.onHalted(v, from);
         String goal = (vs.state() == VehicleManager.MissionState.RETURNING)
                 ? origin
                 : assignedRescue.getOrDefault(v, origin);
-        rerouteOnHalt.put(v, goal);
+        if (goal.equals(origin)) {
+            engine.submitReturn(v, from);
+        } else {
+            dispatchRerouteToGoal(v, from, goal);
+        }
     }
 
     private void handlePathInvalid(String[] b) {
